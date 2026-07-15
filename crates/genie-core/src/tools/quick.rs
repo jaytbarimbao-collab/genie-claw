@@ -302,18 +302,23 @@ fn asks_memory_status(text: &str) -> bool {
 }
 
 fn memory_recall_query(text: &str) -> Option<String> {
-    if contains_any(
-        text,
-        &[
-            "what is my name",
-            "whats my name",
-            "what s my name",
-            "do you know my name",
-            "do you remember my name",
-            "remember my name",
-            "who am i",
-        ],
-    ) {
+    // "who am i" must be the WHOLE question: rhetorical phrases that merely start
+    // with it ("who am i kidding", "who am i talking to") are not asking for the
+    // stored name, so they must abstain for the LLM (#770). The "my name" phrases
+    // do not have that rhetorical-prefix problem and stay as substring matches.
+    if text == "who am i"
+        || contains_any(
+            text,
+            &[
+                "what is my name",
+                "whats my name",
+                "what s my name",
+                "do you know my name",
+                "do you remember my name",
+                "remember my name",
+            ],
+        )
+    {
         return Some("name".into());
     }
 
@@ -3569,6 +3574,30 @@ mod tests {
         assert_eq!(call.name, "memory_recall");
         assert_eq!(call.arguments["query"], "name");
         assert_eq!(call.arguments["limit"], 3);
+
+        // "Who am I?" still asks for the stored name.
+        let call = route("Who am I?").unwrap();
+        assert_eq!(call.name, "memory_recall");
+        assert_eq!(call.arguments["query"], "name");
+    }
+
+    #[test]
+    fn rhetorical_who_am_i_prefix_abstains() {
+        // Phrases that merely START with "who am i" are not asking for the name;
+        // the deterministic router must abstain and let the LLM answer (#770).
+        for utterance in [
+            "Who am I kidding?",
+            "who am i talking to",
+            "who am i to judge",
+        ] {
+            let abstains = route(utterance)
+                .map(|c| c.name != "memory_recall")
+                .unwrap_or(true);
+            assert!(
+                abstains,
+                "{utterance:?} should not route to memory_recall(name)"
+            );
+        }
     }
 
     #[test]
